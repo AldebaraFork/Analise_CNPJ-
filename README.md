@@ -23,19 +23,27 @@ Atualmente em fase de implementação de módulos de segurança e conformidade c
 * **ORM:** [SQLAlchemy](https://www.sqlalchemy.org/)
 * **Manipulação de Dados:** Pandas
 
-🔧 Instalação e Execução
+## 🔧 Instalação e Execução
+
 Siga os passos abaixo para configurar o ambiente localmente:
 
-1. Clonar o Repositório
-Bash
+#### 1. Clonar o Repositório
+
+```bash
 git clone [https://github.com/AldebaraFork/Analise_CNPJ-.git](https://github.com/AldebaraFork/Analise_CNPJ-.git)
 cd Analise_CNPJ-
+
+
+
+
 2. Configurar o Ambiente Python
 Recomenda-se o uso de um ambiente virtual:
 
 Bash
 python -m venv venv
-# No Windows:
+No Windows, ative com:
+
+PowerShell
 .\venv\Scripts\activate
 3. Instalar Dependências
 Bash
@@ -57,4 +65,4 @@ Cadastro: Validação de e-mail e regras de complexidade de senha.
 
 Segurança: Prevenção contra SQL Injection via SQLAlchemy.
 
-Privacidade: Opção de exclusão total de dados do usuário.
+Privacidade: Opção de exclusão total de dados do usuário diretamente pelo Board.
