@@ -27,42 +27,39 @@ Atualmente em fase de implementação de módulos de segurança e conformidade c
 
 Siga os passos abaixo para configurar o ambiente localmente:
 
-#### 1. Clonar o Repositório
+### 1. Clonar o Repositório
 
 ```bash
-git clone [https://github.com/AldebaraFork/Analise_CNPJ-.git](https://github.com/AldebaraFork/Analise_CNPJ-.git)
+git clone https://github.com/AldebaraFork/Analise_CNPJ-.git
 cd Analise_CNPJ-
+```
 
-
-
-
-2. Configurar o Ambiente Python
+### 2. Configurar o Ambiente Python
 Recomenda-se o uso de um ambiente virtual:
-
-Bash
+```bash
 python -m venv venv
+```
+
 No Windows, ative com:
-
-PowerShell
+```bash
 .\venv\Scripts\activate
-3. Instalar Dependências
-Bash
+```
+
+### 3. Instalar Dependências
+```bash
 pip install -r requirements.txt
-4. Configuração do Banco de Dados (PostgreSQL)
-Crie um banco de dados chamado tcc_cnpj.
+```
 
-Certifique-se de que as tabelas de dados (empresas_amostra) estão populadas.
 
-O sistema criará a tabela de usuarios automaticamente na primeira execução.
+### 4. Configuração do Banco de Dados (PostgreSQL)
 
-5. Executar o Dashboard
-Bash
+-Crie um banco de dados com o nome que desejar.
+
+-Certifique-se de que as tabelas de dados (empresas_amostra) estão populadas.
+
+-O sistema criará a tabela de usuarios automaticamente na primeira execução.
+
+### 5. Executar o Dashboard
+```bash
 python -m streamlit run dashboard_tcc.py
-🔐 Funcionalidades de Acesso
-O sistema conta com controle de acesso robusto:
-
-Cadastro: Validação de e-mail e regras de complexidade de senha.
-
-Segurança: Prevenção contra SQL Injection via SQLAlchemy.
-
-Privacidade: Opção de exclusão total de dados do usuário diretamente pelo Board.
+```
