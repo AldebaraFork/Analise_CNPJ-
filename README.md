@@ -32,14 +32,18 @@ Antes de começar, você vai precisar ter instalado:
    ```bash
    git clone [https://github.com/AldebaraFork/Analise_CNPJ-)
 2. **Configurar o Ambiente Python**
+   
    python -m venv venv
  No Windows:
+
 .\venv\Scripts\activate
 
-3. **Instalar Dependências**
+4. **Instalar Dependências**
+   
    pip install -r requirements.txt
 
-4. **Configuração do Banco de Dados (PostgreSQL)**
+6. **Configuração do Banco de Dados (PostgreSQL)**
+   
 O projeto utiliza o PostgreSQL. Certifique-se de que o serviço está rodando e siga os passos:
 
 Crie um banco de dados chamado tcc_cnpj.
