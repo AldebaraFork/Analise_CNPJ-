@@ -33,7 +33,7 @@ Antes de começar, você vai precisar ter instalado:
    git clone [https://github.com/AldebaraFork/Analise_CNPJ-)
 2. **Configurar o Ambiente Python**
    python -m venv venv
-# No Windows:
+ No Windows:
 .\venv\Scripts\activate
 
 3. **Instalar Dependências**
