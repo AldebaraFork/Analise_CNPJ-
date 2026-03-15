@@ -1,4 +1,3 @@
-Markdown
 # 🏛️ Board de Inteligência: Mercado Empresarial (CNPJ Brasil)
 
 Este projeto consiste em uma plataforma de **Engenharia de Dados** ponta-a-ponta, desenvolvida para processar e analisar o capital social das empresas brasileiras com base nos dados abertos da Receita Federal. O sistema integra um banco de dados relacional a um dashboard interativo com camadas de segurança e governança de dados.
@@ -15,13 +14,17 @@ Atualmente em fase de implementação de módulos de segurança e conformidade c
 | **Gestão de Perfil** | 🚀 **Em Progresso** | Exclusão definitiva de conta (Direito ao esquecimento). |
 | **Exportação de Dados** | ⏳ Pendente | Download de relatórios em CSV/Excel. |
 
+---
+
 ## 🛠️ Tecnologias Utilizadas
 * **Linguagem:** Python 3.14
-* **Interface:** [Streamlit](https://streamlit.io/)
-* **Gráficos:** [Plotly Express](https://plotly.com/python/plotly-express/)
-* **Banco de Dados:** [PostgreSQL](https://www.postgresql.org/)
-* **ORM:** [SQLAlchemy](https://www.sqlalchemy.org/)
+* **Interface:** Streamlit
+* **Gráficos:** Plotly Express
+* **Banco de Dados:** PostgreSQL
+* **ORM:** SQLAlchemy
 * **Manipulação de Dados:** Pandas
+
+---
 
 ## 🔧 Instalação e Execução
 
@@ -30,36 +33,28 @@ Siga os passos abaixo para configurar o ambiente localmente:
 ### 1. Clonar o Repositório
 
 ```bash
-git clone https://github.com/AldebaraFork/Analise_CNPJ-.git
+git clone [https://github.com/AldebaraFork/Analise_CNPJ-.git](https://github.com/AldebaraFork/Analise_CNPJ-.git)
 cd Analise_CNPJ-
-```
 
-### 2. Configurar o Ambiente Python
+2. Configurar o Ambiente Python
 Recomenda-se o uso de um ambiente virtual:
-```bash
+
+Bash
 python -m venv venv
-```
-
 No Windows, ative com:
-```bash
+
+Bash
 .\venv\Scripts\activate
-```
-
-### 3. Instalar Dependências
-```bash
+3. Instalar Dependências
+Bash
 pip install -r requirements.txt
-```
+4. Configuração do Banco de Dados (PostgreSQL)
+Crie um banco de dados com o nome que desejar (ex: tcc_cnpj).
 
+Certifique-se de que as tabelas de dados (empresas_amostra) estão populadas.
 
-### 4. Configuração do Banco de Dados (PostgreSQL)
+O sistema criará a tabela de usuarios automaticamente na primeira execução.
 
--Crie um banco de dados com o nome que desejar.
-
--Certifique-se de que as tabelas de dados (empresas_amostra) estão populadas.
-
--O sistema criará a tabela de usuarios automaticamente na primeira execução.
-
-### 5. Executar o Dashboard
-```bash
+5. Executar o Dashboard
+Bash
 python -m streamlit run dashboard_tcc.py
-```
