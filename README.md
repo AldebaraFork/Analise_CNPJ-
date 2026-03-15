@@ -23,12 +23,11 @@ Atualmente em fase de implementação de módulos de segurança e conformidade c
 * **ORM:** [SQLAlchemy](https://www.sqlalchemy.org/)
 * **Manipulação de Dados:** Pandas
 
-## 🔧 Instalação e Execução
-
+🔧 Instalação e Execução
 Siga os passos abaixo para configurar o ambiente localmente:
 
-### 1. Clonar o Repositório
-```bash
+1. Clonar o Repositório
+Bash
 git clone [https://github.com/AldebaraFork/Analise_CNPJ-.git](https://github.com/AldebaraFork/Analise_CNPJ-.git)
 cd Analise_CNPJ-
 2. Configurar o Ambiente Python
@@ -56,15 +55,6 @@ O sistema conta com controle de acesso robusto:
 
 Cadastro: Validação de e-mail e regras de complexidade de senha.
 
-Segurança: Prevenção contra SQL Injection via consultas parametrizadas (SQLAlchemy).
+Segurança: Prevenção contra SQL Injection via SQLAlchemy.
 
-Privacidade: Opção de exclusão total de dados do usuário diretamente pela interface do Board.
-
-📂 Estrutura do Repositório
-dashboard_tcc.py: Aplicação principal em Streamlit.
-
-requirements.txt: Lista de dependências do projeto.
-
-.gitignore: Filtro para evitar o versionamento de dados pesados (ZIPs/CSVs).
-
-README.md: Documentação oficial do projeto.
+Privacidade: Opção de exclusão total de dados do usuário.
