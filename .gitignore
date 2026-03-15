@@ -1,0 +1,21 @@
+# --- Dados e Arquivos Pesados ---
+2026-02.zip
+*.zip
+*.csv
+*.sql
+*.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# --- Gráficos Gerados (Opcional) ---
+# Se você quiser que os PNGs fiquem só no seu PC:
+# *.png
+
+# --- Sistema ---
+.DS_Store
+Thumbs.db
