@@ -10,8 +10,10 @@ Atualmente em fase de implementação de módulos de segurança e conformidade c
 | **Ingestão & ETL** | ✅ Concluído | Processamento de ZIPs e carga no PostgreSQL. |
 | **Board Interativo** | ✅ Concluído | Visualização de médias e faixas de capital social. |
 | **Sistema de Login/E-mail** | 🚀 **Em Progresso** | Autenticação de usuários via E-mail e Senha. |
-| **Segurança & Regras** | 🚀 **Em Progresso** | Validação de senha (8+ char, 1 Maiúscula). |
-| **Gestão de Perfil** | 🚀 **Em Progresso** | Exclusão definitiva de conta (Direito ao esquecimento). |
+| **Segurança & Regras** | ✅ Concluído | Validação de senha (8+ char, 1 Maiúscula). |
+| **Gestão de Perfil** | ✅ Concluído | Exclusão definitiva de conta (Direito ao esquecimento). |
+| **Segurança do usuário** | ✅ Concluído | Segurança do Usuário com Hash |
+| **Gestão de dados Medalion** | ✅ Concluído | Separação e caracterização de dados em camadas bronze silver e gold |
 | **Exportação de Dados** | ⏳ Pendente | Download de relatórios em CSV/Excel. |
 
 ---
