@@ -1,0 +1,37 @@
+# PostgreSQL para desenvolvimento e para a base de demonstração.
+#
+#   docker compose up -d
+#   python demo/criar_demo.py
+#   streamlit run app.py
+#
+# Este compose NÃO é dimensionado para o pipeline completo da Receita — aquele
+# precisa de ~75 GB de tabelas intermediárias e de ajustes de work_mem que
+# dependem da máquina. Para a carga real, use uma instalação local do
+# PostgreSQL e siga o README.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cnpj_postgres
+    environment:
+      POSTGRES_USER: cnpj
+      POSTGRES_PASSWORD: cnpj_local
+      POSTGRES_DB: cnpj
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # A base de demonstração cabe folgado nestes limites; o join real, não.
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c work_mem=64MB
+      -c maintenance_work_mem=512MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cnpj -d cnpj"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

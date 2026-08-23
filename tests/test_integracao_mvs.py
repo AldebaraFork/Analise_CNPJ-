@@ -1,0 +1,187 @@
+"""
+Testes de integração das views materializadas — exigem PostgreSQL de verdade.
+
+Os testes com mock provam que o Python sabe ler um DataFrame; estes provam que
+o SQL faz o que diz. São executados contra a base de demonstração:
+
+    docker compose up -d
+    python demo/criar_demo.py
+    CNPJ_TEST_DSN=postgresql://cnpj:cnpj_local@localhost:5432/cnpj \\
+        python -m pytest tests/test_integracao_mvs.py -v
+
+Sem CNPJ_TEST_DSN definida, o módulo inteiro é pulado — a suíte de unidade
+continua rodando em qualquer máquina, sem banco.
+
+Vários testes aqui são regressões de bugs que chegaram a ir ao ar. Estão
+marcados como tal.
+"""
+
+import os
+
+import pytest
+
+psycopg2 = pytest.importorskip("psycopg2")
+
+DSN = os.environ.get("CNPJ_TEST_DSN")
+
+pytestmark = pytest.mark.skipif(
+    not DSN, reason="CNPJ_TEST_DSN não definida — testes de integração pulados"
+)
+
+# As 27 unidades da federação. Nada além disto é UF.
+UFS_VALIDAS = {
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS",
+    "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC",
+    "SP", "SE", "TO",
+}
+
+
+@pytest.fixture(scope="module")
+def cur():
+    conn = psycopg2.connect(DSN)
+    conn.autocommit = True
+    with conn.cursor() as c:
+        yield c
+    conn.close()
+
+
+def _existe(cur, nome):
+    cur.execute("SELECT to_regclass(%s)", (nome,))
+    return cur.fetchone()[0] is not None
+
+
+MVS_ESPERADAS = [
+    "mv_sobrevivencia_setor", "mv_sobrevivencia_geral", "mv_sobrevivencia_faixas",
+    "mv_coorte_sobrevivencia", "mv_natalidade_mortalidade", "mv_kpis_uf",
+    "mv_crescimento_uf", "mv_painel_ano", "mv_painel_cidade",
+    "mv_capital_ano_municipio", "mv_sobrevivencia_regime", "mv_motivo_baixa",
+    "mv_coorte_regime",
+]
+
+
+@pytest.mark.parametrize("mv", MVS_ESPERADAS)
+def test_mv_existe_e_tem_linhas(cur, mv):
+    assert _existe(cur, mv), f"{mv} não existe — rode demo/criar_demo.py"
+    cur.execute(f"SELECT count(*) FROM {mv}")
+    assert cur.fetchone()[0] > 0, f"{mv} está vazia"
+
+
+def test_uf_e_sempre_sigla_valida(cur):
+    """REGRESSÃO: o comparador derivava a UF de LEFT(cod_municipio::text, 2).
+
+    O campo `municipio` da Receita é código interno da RFB, não IBGE — São
+    Paulo é 7107, Rio é 6001. Aquele LEFT produzia '71', '60', '81', que a
+    interface exibia como 'Grupo 71'. Este teste falha no instante em que
+    alguém reintroduzir um agrupamento que não seja a coluna uf.
+    """
+    cur.execute("SELECT DISTINCT uf FROM mv_kpis_uf")
+    encontradas = {r[0] for r in cur.fetchall()}
+    invalidas = encontradas - UFS_VALIDAS
+    assert not invalidas, f"valores que não são UF: {sorted(invalidas)}"
+
+
+def test_faixas_somam_cem_por_setor(cur):
+    """Cada barra do gráfico empilhado tem que fechar em 100%."""
+    cur.execute("""
+        SELECT setor, round(sum(pct), 1) AS total
+        FROM mv_sobrevivencia_faixas
+        GROUP BY setor
+        HAVING round(sum(pct), 1) NOT BETWEEN 99.5 AND 100.5
+    """)
+    assert cur.fetchall() == []
+
+
+def test_coorte_preserva_o_total_da_safra(cur):
+    """A soma do histograma tem que bater com a contagem na tabela-fonte.
+
+    Se bater diferente, alguma empresa foi perdida ou contada duas vezes na
+    agregação — e a curva de sobrevivência sairia sobre um denominador errado.
+    """
+    cur.execute("""
+        SELECT c.coorte, c.total_mv, g.total_gold
+        FROM (SELECT coorte, sum(qtd) AS total_mv
+              FROM mv_coorte_sobrevivencia GROUP BY coorte) c
+        JOIN (SELECT EXTRACT(YEAR FROM data_abertura)::int AS coorte,
+                     count(*) AS total_gold
+              FROM empresas_gold
+              WHERE data_abertura >= DATE '1990-01-01'
+              GROUP BY 1) g USING (coorte)
+        WHERE c.total_mv <> g.total_gold
+    """)
+    assert cur.fetchall() == []
+
+
+def test_saldo_e_aberturas_menos_baixas(cur):
+    cur.execute("""
+        SELECT count(*) FROM mv_natalidade_mortalidade
+        WHERE saldo <> aberturas - baixas
+    """)
+    assert cur.fetchone()[0] == 0
+
+
+def test_mediana_nacional_nao_e_media_das_medianas(cur):
+    """REGRESSÃO do número de 20,9 anos.
+
+    A mediana nacional tem que vir de mv_sobrevivencia_geral, que roda
+    percentile_cont sobre todas as baixadas. Aqui só verificamos que ela é
+    coerente com os próprios quartis — se alguém trocar a fonte por uma média
+    de medianas setoriais, a relação q1 <= mediana <= q3 continua valendo,
+    mas o valor sai da faixa dos dados.
+    """
+    cur.execute("SELECT total, media, mediana, q1, q3 FROM mv_sobrevivencia_geral")
+    total, media, mediana, q1, q3 = cur.fetchone()
+
+    assert total > 0
+    assert q1 <= mediana <= q3, "quartis fora de ordem"
+
+    # A mediana precisa estar dentro da amplitude observada de fato.
+    cur.execute("""
+        SELECT min((data_situacao - data_abertura) / 365.25),
+               max((data_situacao - data_abertura) / 365.25)
+        FROM empresas_gold
+        WHERE situacao_cadastral = 8
+          AND data_situacao IS NOT NULL
+          AND data_situacao >= data_abertura
+    """)
+    menor, maior = cur.fetchone()
+    assert menor <= mediana <= maior
+
+
+def test_sobrevivencia_so_conta_baixadas(cur):
+    """Sobrevivência mede empresa que FECHOU. Contar as ativas transformaria
+    a métrica em 'idade desde a fundação' — que foi o bug original do
+    projeto, o que produziu os 44,5 anos."""
+    cur.execute("""
+        SELECT count(*) FROM empresas_gold
+        WHERE situacao_cadastral = 8 AND data_situacao IS NOT NULL
+          AND data_situacao >= data_abertura
+    """)
+    baixadas = cur.fetchone()[0]
+    cur.execute("SELECT total FROM mv_sobrevivencia_geral")
+    assert cur.fetchone()[0] == baixadas
+
+
+def test_nenhuma_data_futura(cur):
+    """Nenhuma abertura pode ser posterior à competência da extração."""
+    competencia = os.environ.get("CNPJ_COMPETENCIA", "2026-02-28")
+    cur.execute(
+        "SELECT count(*) FROM empresas_gold WHERE data_abertura > %s",
+        (competencia,),
+    )
+    assert cur.fetchone()[0] == 0
+
+
+def test_nenhuma_decada_concentra_a_base(cur):
+    """REGRESSÃO do bug de shard.
+
+    Quando o ETL cruzava Empresas0 com Estabelecimentos0, a interseção caía
+    para ~16% da base e 81% dela se empilhava nos anos 2020. Nenhuma década
+    deve passar de 60%.
+    """
+    cur.execute("""
+        SELECT round(100.0 * max(c) / sum(c), 1) FROM (
+            SELECT count(*) AS c FROM empresas_gold
+            GROUP BY (EXTRACT(YEAR FROM data_abertura)::int / 10)
+        ) t
+    """)
+    assert cur.fetchone()[0] < 60

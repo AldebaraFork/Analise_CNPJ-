@@ -16,34 +16,50 @@ Regras críticas seguidas:
 - NUNCA f-string em SQL → sempre text() + params={}
 - NUNCA SELECT * sem LIMIT
 - Agregação no PostgreSQL, não no Pandas
-- UF derivada via LEFT(cod_municipio::text, 2) — coluna 'uf' NÃO existe
-- Data via data_abertura — coluna 'data_situacao' NÃO existe
+- UF vem da coluna 'uf' de empresas_gold (sigla oficial, carregada pelo ETL)
+- Séries temporais param em ULTIMO_ANO_COMPLETO — o ano da competência é parcial
+
+CORREÇÃO — era o bug do "Grupo 60" / "Grupo 71":
+    A versão anterior derivava a UF de LEFT(cod_municipio::text, 2), assumindo
+    que cod_municipio fosse código IBGE. Não é. O campo "municipio" do arquivo
+    de Estabelecimentos traz o código INTERNO da Receita Federal — São Paulo é
+    7107 e Rio de Janeiro é 6001, não 3550308 e 3304557 como no IBGE.
+    Assim LEFT(...,2) produzia "71", "60", "81"…, que não existem no mapa de
+    UFs do IBGE; o .fillna() deixava o número cru passar e a tela exibia
+    "Grupo 71". E o agrupamento por faixa de código da RFB não corresponde a
+    estado: misturava municípios de UFs diferentes e rotulava aquilo de região.
+
+    A empresas_gold reconstruída carrega st.uf, a sigla de duas letras. É a
+    única fonte correta de UF neste projeto.
 """
 
-import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 # Streamlit Cloud injeta st.secrets; local usa DATABASE_URL do .env.
-from database import engine   # resolvedor neutro: evita import circular
-                              # (dashboard_tcc importa este modulo)
+from database import engine, COMPETENCIA, ULTIMO_ANO_COMPLETO
+                              # resolvedor neutro: evita import circular
+                              # (app importa este modulo)
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
 
-# Mapeamento IBGE: prefixo cod_municipio (2 dígitos) → sigla UF
-UF_MAP: dict[str, str] = {
-    "11": "RO", "12": "AC", "13": "AM", "14": "RR", "15": "PA",
-    "16": "AP", "17": "TO", "21": "MA", "22": "PI", "23": "CE",
-    "24": "RN", "25": "PB", "26": "PE", "27": "AL", "28": "SE",
-    "29": "BA", "31": "MG", "32": "ES", "33": "RJ", "35": "SP",
-    "41": "PR", "42": "SC", "43": "RS", "50": "MS", "51": "MT",
-    "52": "GO", "53": "DF",
+# Sigla → nome por extenso. Serve só para rotular a interface; o agrupamento
+# é feito pela própria sigla vinda do banco.
+UF_NOME: dict[str, str] = {
+    "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas",
+    "BA": "Bahia", "CE": "Ceará", "DF": "Distrito Federal",
+    "ES": "Espírito Santo", "GO": "Goiás", "MA": "Maranhão",
+    "MT": "Mato Grosso", "MS": "Mato Grosso do Sul", "MG": "Minas Gerais",
+    "PA": "Pará", "PB": "Paraíba", "PR": "Paraná", "PE": "Pernambuco",
+    "PI": "Piauí", "RJ": "Rio de Janeiro", "RN": "Rio Grande do Norte",
+    "RS": "Rio Grande do Sul", "RO": "Rondônia", "RR": "Roraima",
+    "SC": "Santa Catarina", "SP": "São Paulo", "SE": "Sergipe",
+    "TO": "Tocantins",
 }
 
 # Paleta fixa para consistência entre gráficos (máx 4 regiões)
@@ -75,38 +91,16 @@ DIVISAO_CNAE_MAP: dict[str, str] = {
 
 @st.cache_data(ttl=3600)
 def _carregar_ufs_disponiveis() -> pd.DataFrame:
+    """Lista de UFs para o seletor — siglas reais, lidas de mv_kpis_uf."""
     sql = text("""
-        WITH contagem AS (
-            SELECT
-                LEFT(cod_municipio::text, 2) AS cod_uf,
-                cod_municipio,
-                COUNT(*) AS qtd
-            FROM empresas_gold
-            GROUP BY 1, 2
-        ),
-        top_municipio AS (
-            SELECT DISTINCT ON (cod_uf)
-                cod_uf,
-                cod_municipio,
-                qtd
-            FROM contagem
-            ORDER BY cod_uf, qtd DESC
-        )
-        SELECT
-            t.cod_uf,
-            SUM(c.qtd)      AS total_empresas,
-            mr.descricao    AS municipio_mais_comum
-        FROM contagem c
-        JOIN top_municipio t  ON t.cod_uf = c.cod_uf
-        LEFT JOIN municipios_referencia mr ON mr.codigo = t.cod_municipio
-        GROUP BY t.cod_uf, mr.descricao
-        ORDER BY 2 DESC
+        SELECT uf, total_empresas
+        FROM mv_kpis_uf
+        ORDER BY total_empresas DESC
     """)
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
     df["label"] = (
-        "Grupo " + df["cod_uf"] +
-        " — " + df["municipio_mais_comum"].fillna("?") +
+        df["uf"] + " — " + df["uf"].map(UF_NOME).fillna("?") +
         " (" + df["total_empresas"].map("{:,}".format).str.replace(",", ".") + ")"
     )
     return df
@@ -134,29 +128,21 @@ def _carregar_municipios_top(limite: int = 100) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800)
-def _kpis_por_uf(cod_ufs: tuple[str, ...]) -> pd.DataFrame:
+def _kpis_por_uf(ufs: tuple[str, ...]) -> pd.DataFrame:
     """
-    KPIs agregados por UF:
-    total_empresas | capital_medio | pct_ativas
+    KPIs agregados por UF: total_empresas | capital_medio | pct_ativas
 
-    Usa índice idx_eg_capital_positivo para capital_medio.
+    Lê de mv_kpis_uf, pré-agregada sobre a coluna uf real. A % de ativas só
+    existe agora porque situacao_cadastral entrou na Gold nesta reconstrução —
+    a docstring do módulo prometia esse KPI desde o início e ele nunca aparecia.
     """
     sql = text("""
-        SELECT
-            LEFT(cod_municipio::text, 2)                               AS cod_uf,
-            COUNT(*)                                                   AS total_empresas,
-            ROUND(
-                AVG(capital_social) FILTER (WHERE capital_social > 0)::numeric,
-                2
-            )                                                          AS capital_medio
-        FROM empresas_gold
-        WHERE LEFT(cod_municipio::text, 2) = ANY(:ufs)
-        GROUP BY 1
+        SELECT uf AS sigla_uf, total_empresas, capital_medio, pct_ativas
+        FROM mv_kpis_uf
+        WHERE uf = ANY(:ufs)
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"ufs": list(cod_ufs)})
-    df["sigla_uf"] = df["cod_uf"].map(UF_MAP).fillna(df["cod_uf"])
-    return df
+        return pd.read_sql(sql, conn, params={"ufs": list(ufs)})
 
 
 @st.cache_data(ttl=1800)
@@ -182,24 +168,24 @@ def _kpis_por_municipio(cod_municipios: tuple[int, ...]) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800)
-def _setores_por_uf(cod_ufs: tuple[str, ...], top_n: int = 8) -> pd.DataFrame:
+def _setores_por_uf(ufs: tuple[str, ...], top_n: int = 8) -> pd.DataFrame:
     """
     Distribuição percentual dos top N setores (divisão CNAE 2 dígitos) por UF.
-    Retorna tabela longa: cod_uf | divisao | pct
+    Retorna tabela longa: sigla_uf | divisao | pct
     """
     sql = text("""
         WITH base AS (
             SELECT
-                LEFT(cod_municipio::text, 2)   AS cod_uf,
+                uf                             AS sigla_uf,
                 LEFT(cnae_fiscal::text, 2)     AS divisao,
                 COUNT(*)                       AS qtd
             FROM empresas_gold
-            WHERE LEFT(cod_municipio::text, 2) = ANY(:ufs)
+            WHERE uf = ANY(:ufs)
               AND cnae_fiscal IS NOT NULL
             GROUP BY 1, 2
         ),
         totais AS (
-            SELECT cod_uf, SUM(qtd) AS total FROM base GROUP BY cod_uf
+            SELECT sigla_uf, SUM(qtd) AS total FROM base GROUP BY sigla_uf
         ),
         top_divisoes AS (
             SELECT divisao
@@ -209,17 +195,16 @@ def _setores_por_uf(cod_ufs: tuple[str, ...], top_n: int = 8) -> pd.DataFrame:
             LIMIT :top_n
         )
         SELECT
-            b.cod_uf,
+            b.sigla_uf,
             b.divisao,
             ROUND(b.qtd * 100.0 / t.total, 2) AS pct
         FROM base b
-        JOIN totais       t  ON t.cod_uf  = b.cod_uf
+        JOIN totais       t  ON t.sigla_uf = b.sigla_uf
         JOIN top_divisoes td ON td.divisao = b.divisao
-        ORDER BY b.cod_uf, pct DESC
+        ORDER BY b.sigla_uf, pct DESC
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"ufs": list(cod_ufs), "top_n": top_n})
-    df["sigla_uf"] = df["cod_uf"].map(UF_MAP).fillna(df["cod_uf"])
+        df = pd.read_sql(sql, conn, params={"ufs": list(ufs), "top_n": top_n})
     df["setor"] = df["divisao"].map(DIVISAO_CNAE_MAP).fillna("Divisão " + df["divisao"])
     return df
 
@@ -268,28 +253,32 @@ def _setores_por_municipio(cod_municipios: tuple[int, ...], top_n: int = 8) -> p
 
 @st.cache_data(ttl=1800)
 def _crescimento_por_uf(
-    cod_ufs: tuple[str, ...],
+    ufs: tuple[str, ...],
     ano_inicio: int = 2000,
 ) -> pd.DataFrame:
     """
-    Série temporal de aberturas por UF e ano.
-    Usa mv_crescimento_municipio (já existe) e agrega pela UF.
+    Série temporal de aberturas por UF e ano — de mv_crescimento_uf.
+
+    O teto :ano_fim corta o ano da competência. Com dois meses de registros ele
+    aparecia como despencada de ~600 mil para ~90 mil aberturas: parecia colapso
+    da atividade empresarial e era só a base terminando ali.
     """
     sql = text("""
-        SELECT
-            LEFT(cod_municipio::text, 2)   AS cod_uf,
-            ano,
-            SUM(total)                     AS aberturas
-        FROM mv_crescimento_municipio
-        WHERE LEFT(cod_municipio::text, 2) = ANY(:ufs)
-          AND ano >= :ano_inicio
-        GROUP BY 1, 2
-        ORDER BY 1, 2
+        SELECT uf AS sigla_uf, ano, aberturas
+        FROM mv_crescimento_uf
+        WHERE uf = ANY(:ufs)
+          AND ano BETWEEN :ano_inicio AND :ano_fim
+        ORDER BY uf, ano
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"ufs": list(cod_ufs), "ano_inicio": ano_inicio})
-    df["sigla_uf"] = df["cod_uf"].map(UF_MAP).fillna(df["cod_uf"])
-    return df
+        return pd.read_sql(
+            sql, conn,
+            params={
+                "ufs": list(ufs),
+                "ano_inicio": ano_inicio,
+                "ano_fim": ULTIMO_ANO_COMPLETO,
+            },
+        )
 
 
 @st.cache_data(ttl=1800)
@@ -307,12 +296,18 @@ def _crescimento_por_municipio(
         FROM mv_crescimento_municipio mcm
         LEFT JOIN municipios_referencia mr ON mr.codigo = mcm.cod_municipio
         WHERE mcm.cod_municipio = ANY(:municipios)
-          AND mcm.ano >= :ano_inicio
+          AND mcm.ano BETWEEN :ano_inicio AND :ano_fim
         ORDER BY mcm.cod_municipio, mcm.ano
     """)
     with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"municipios": list(cod_municipios), "ano_inicio": ano_inicio})
-    return df
+        return pd.read_sql(
+            sql, conn,
+            params={
+                "municipios": list(cod_municipios),
+                "ano_inicio": ano_inicio,
+                "ano_fim": ULTIMO_ANO_COMPLETO,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +343,10 @@ def _render_kpi_cards(df_kpi: pd.DataFrame, col_regiao: str, cores: dict) -> Non
             )
             st.metric(label="🏢 Total de empresas", value=total)
             st.metric(label="💰 Capital médio", value=capital)
+            # pct_ativas só existe no modo UF (vem de mv_kpis_uf).
+            pct = getattr(row, "pct_ativas", None)
+            if pct is not None and pd.notna(pct):
+                st.metric(label="✅ Empresas ativas", value=f"{float(pct):.1f}%")
             st.divider()
 
 
@@ -459,7 +458,7 @@ def _is_dark() -> bool:
 def render_comparador() -> None:
     """
     Renderiza a página completa do Comparador Regional.
-    Chame esta função em dashboard_tcc.py na navegação de páginas.
+    Chame esta função em app.py na navegação de páginas.
     """
     st.title("🗺️ Comparador Regional")
     st.caption(
@@ -482,11 +481,13 @@ def render_comparador() -> None:
         )
 
     with col_ano:
+        # O teto acompanha a competência: estava fixo em 2023 e ficava
+        # defasado a cada recarga da base.
         ano_inicio = st.slider(
             "Período (crescimento)",
             min_value=1990,
-            max_value=2023,
-            value=2005,
+            max_value=ULTIMO_ANO_COMPLETO,
+            value=min(2005, ULTIMO_ANO_COMPLETO),
             key="comparador_ano_inicio",
         )
 
@@ -495,7 +496,7 @@ def render_comparador() -> None:
     # ------------------------------------------------------------------
     if modo == "UF (Estado)":
         df_ufs = _carregar_ufs_disponiveis()
-        opcoes = dict(zip(df_ufs["label"], df_ufs["cod_uf"]))
+        opcoes = dict(zip(df_ufs["label"], df_ufs["uf"]))
 
         selecao_labels = st.multiselect(
             "Selecione 2 a 4 estados para comparar:",
@@ -510,15 +511,14 @@ def render_comparador() -> None:
             st.info("📌 Selecione pelo menos 2 estados para ativar a comparação.")
             return
 
-        cod_selecionados = tuple(opcoes[l] for l in selecao_labels)
-        siglas = [UF_MAP.get(c, c) for c in cod_selecionados]
+        siglas = tuple(opcoes[l] for l in selecao_labels)
         cores = dict(zip(siglas, PALETA[: len(siglas)]))
 
         # Queries
         with st.spinner("Consultando PostgreSQL..."):
-            df_kpi = _kpis_por_uf(cod_selecionados)
-            df_setores = _setores_por_uf(cod_selecionados)
-            df_cresc = _crescimento_por_uf(cod_selecionados, ano_inicio)
+            df_kpi = _kpis_por_uf(siglas)
+            df_setores = _setores_por_uf(siglas)
+            df_cresc = _crescimento_por_uf(siglas, ano_inicio)
 
         col_regiao = "sigla_uf"
         col_kpi_regiao = "sigla_uf"
@@ -589,9 +589,14 @@ def render_comparador() -> None:
     # ------------------------------------------------------------------
     st.subheader("📈 Evolução de Aberturas")
     if df_cresc.empty:
-        st.info("Dados de crescimento não encontrados na mv_crescimento_municipio.")
+        st.info("Dados de crescimento não encontrados nas views de crescimento.")
     else:
         _render_linha_crescimento(df_cresc, col_regiao, cores)
+        st.caption(
+            f"Série de {ano_inicio} a {ULTIMO_ANO_COMPLETO}. A base é a competência "
+            f"de {COMPETENCIA:%m/%Y}, então {COMPETENCIA.year} tem apenas os primeiros "
+            "meses registrados — incluí-lo desenharia uma queda que não existe."
+        )
 
     st.divider()
 

@@ -3,9 +3,9 @@ Fixtures compartilhadas entre todos os módulos de teste.
 
 IMPORTANTE sobre o engine:
   conftest.py é carregado ANTES dos módulos de teste.
-  Ele importa dashboard_tcc com create_engine mockado → dashboard_tcc.engine
+  Ele importa app com create_engine mockado → app.engine
   aponta para o SQLite em memória.
-  Nos helpers dos testes, acesse o engine via `dashboard_tcc.engine` (não via
+  Nos helpers dos testes, acesse o engine via `app.engine` (não via
   `from tests.conftest import _ENGINE`) para evitar uma segunda importação do
   conftest que criaria um engine separado.
 """
@@ -73,7 +73,7 @@ with _ENGINE.connect() as _c:
 _orig_create_engine = _sa.create_engine
 _sa.create_engine = lambda *a, **kw: _ENGINE
 
-import dashboard_tcc  # noqa: E402
+import app  # noqa: E402
 
 _sa.create_engine = _orig_create_engine
 
@@ -82,14 +82,14 @@ _sa.create_engine = _orig_create_engine
 
 @pytest.fixture(scope="session")
 def engine():
-    """Engine de teste — o mesmo objeto que dashboard_tcc.engine usa."""
-    return dashboard_tcc.engine
+    """Engine de teste — o mesmo objeto que app.engine usa."""
+    return app.engine
 
 
 @pytest.fixture(scope="session")
 def dashboard():
-    """Módulo dashboard_tcc com engine de teste já injetado."""
-    return dashboard_tcc
+    """Módulo app com engine de teste já injetado."""
+    return app
 
 
 @pytest.fixture

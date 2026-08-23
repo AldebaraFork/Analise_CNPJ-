@@ -11,6 +11,7 @@ cadeia, e o secrets.toml é apenas o fallback de produção.
 """
 
 import os
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,6 +21,27 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 load_dotenv()
 
 _SECRETS = Path(__file__).parent / ".streamlit" / "secrets.toml"
+
+# ---------------------------------------------------------------------------
+# Competência da extração
+#
+# A base pública da RFB é uma foto mensal. A carga atual é a de fevereiro/2026,
+# então não existe registro posterior a 2026-02 — e 2026 tem apenas dois meses
+# de aberturas.
+#
+# Sem essa informação, toda série temporal despenca no último ponto e parece
+# que o Brasil parou de abrir empresas. Não parou: a régua é que acaba ali.
+# Os gráficos encerram a série em ULTIMO_ANO_COMPLETO.
+#
+# Ao carregar uma competência nova, ajuste CNPJ_COMPETENCIA no .env
+# (formato AAAA-MM-DD) ou este default.
+# ---------------------------------------------------------------------------
+COMPETENCIA = date.fromisoformat(os.environ.get("CNPJ_COMPETENCIA", "2026-02-28"))
+
+# Dezembro é o único mês em que o próprio ano da competência está completo.
+ULTIMO_ANO_COMPLETO = (
+    COMPETENCIA.year if COMPETENCIA.month == 12 else COMPETENCIA.year - 1
+)
 
 
 def resolver_url() -> str:

@@ -57,8 +57,15 @@ slide*.png
 carrossel_*.pdf
 *.log
 
-# Os gráficos do relatório são versionados de propósito:
-# grafico_distribuicao.png, grafico_media.png
+# Artefatos do trabalho acadêmico e de divulgação — o repositório é do
+# pipeline, não da apresentação dele.
+Relatorio_Final_TCC*.pdf
+grafico_distribuicao.png
+grafico_media.png
+
+# Documentos pessoais que moram na mesma pasta por conveniência
+cover_letter*.md
+*_leadtech.md
 
 # =============================================================
 #  Editores e ferramentas

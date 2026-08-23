@@ -2,7 +2,7 @@
 Testes de segurança: gerar_hash_senha e verificar_login.
 
 Usa o engine SQLite em memória configurado pelo conftest — sem PostgreSQL.
-Os helpers de setup/teardown acessam o engine via dashboard_tcc.engine para
+Os helpers de setup/teardown acessam o engine via app.engine para
 garantir que é o mesmo engine que as funções testadas utilizam.
 """
 
@@ -10,7 +10,7 @@ import bcrypt
 import pytest
 from sqlalchemy import text
 
-import dashboard_tcc as _dash
+import app as _dash
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

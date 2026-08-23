@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-benchmark_queries.py — Benchmarks das queries principais do dashboard_tcc.py
+benchmark_queries.py — Benchmarks das queries principais do app.py
 
 Executa cada query N vezes no PostgreSQL (padrão: 5), mede o tempo médio com
 time.perf_counter e analisa o plano via EXPLAIN ANALYZE para detectar Seq Scans
@@ -486,7 +486,7 @@ def _stddev(values: list[float]) -> float:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Benchmark das queries do dashboard_tcc.py",
+        description="Benchmark das queries do app.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Exemplos:\n"
@@ -513,7 +513,7 @@ def main() -> None:
     display_url = re.sub(r":([^:@/]+)@", ":***@", db_url)
 
     print(_header(
-        "BENCHMARK QUERIES — dashboard_tcc.py",
+        "BENCHMARK QUERIES — app.py",
         f"Banco   : {display_url}",
         f"Rodadas : {args.runs} por query  (+ 1 EXPLAIN ANALYZE cada)",
         f"Data    : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",

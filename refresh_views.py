@@ -16,8 +16,24 @@ VIEWS = [
     "mv_crescimento_municipio",
     "mv_bolhas_ano_municipio",
     "mv_treemap_setores",
-    "mv_comparador_uf_kpis",
+    "mv_comparador_uf_kpis",   # legado — agrupa por LEFT(cod_municipio,2),
+                               # que não é UF. Substituída por mv_kpis_uf.
     "mv_sobrevivencia_setor",
+    # Criadas por mv_correcoes_painel.sql
+    "mv_sobrevivencia_geral",
+    "mv_kpis_uf",
+    "mv_crescimento_uf",
+    "mv_painel_ano",
+    "mv_painel_cidade",
+    # Criadas por mv_analises_sobrevivencia.sql
+    "mv_sobrevivencia_faixas",
+    "mv_coorte_sobrevivencia",
+    "mv_natalidade_mortalidade",
+    # Criadas por mv_analises_avancadas.sql — só existem depois de recarregar a
+    # Gold com o ETL novo. Ausentes, o refresh apenas registra [ERRO] e segue.
+    "mv_sobrevivencia_regime",
+    "mv_motivo_baixa",
+    "mv_coorte_regime",
 ]
 
 

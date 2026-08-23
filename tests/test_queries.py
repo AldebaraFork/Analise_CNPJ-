@@ -6,14 +6,14 @@ Estratégia dupla:
   - Funções com sintaxe PostgreSQL exclusiva (PERCENTILE_CONT, DATE_PART,
     EXTRACT, COUNT FILTER) → mock de pd.read_sql para validar estrutura do retorno
 
-Os helpers de setup/teardown usam dashboard_tcc.engine diretamente para
+Os helpers de setup/teardown usam app.engine diretamente para
 evitar double-import do conftest (que criaria um engine separado).
 """
 
 import json
 from unittest.mock import patch, MagicMock
 
-import dashboard_tcc as _dash
+import app as _dash
 import pandas as pd
 import pytest
 from sqlalchemy import text
@@ -81,50 +81,16 @@ class TestCarregarOpcoesFiltros(_BaseComDados):
 
 # ── carregar_contagem_uf ──────────────────────────────────────────────────────
 
-class TestCarregarContagemUf:
-    """
-    Testa carregar_contagem_uf() mockando a função diretamente.
-    Não usa information_schema (exclusivo do PostgreSQL).
-    Schema confirmado: lê de mv_densidade_uf (cod_uf, total).
-    """
-
-    @pytest.fixture
-    def df_densidade_mock(self) -> pd.DataFrame:
-        return pd.DataFrame({
-            "cod_uf": ["35", "33", "31", "29", "41"],
-            "total":  [5_200_000, 2_100_000, 1_800_000, 950_000, 1_200_000],
-        })
-
-    def test_retorna_dataframe(self, df_densidade_mock, dashboard):
-        with patch.object(dashboard, "carregar_contagem_uf",
-                          return_value=df_densidade_mock):
-            df = dashboard.carregar_contagem_uf()
-        assert isinstance(df, pd.DataFrame)
-
-    def test_colunas_esperadas(self, df_densidade_mock, dashboard):
-        with patch.object(dashboard, "carregar_contagem_uf",
-                          return_value=df_densidade_mock):
-            df = dashboard.carregar_contagem_uf()
-        assert "cod_uf" in df.columns
-        assert "total" in df.columns
-
-    def test_sp_tem_mais_empresas_que_rj(self, df_densidade_mock, dashboard):
-        with patch.object(dashboard, "carregar_contagem_uf",
-                          return_value=df_densidade_mock):
-            df = dashboard.carregar_contagem_uf()
-        sp = df[df["cod_uf"] == "35"]["total"].iloc[0]
-        rj = df[df["cod_uf"] == "33"]["total"].iloc[0]
-        assert sp > rj
-
-    def test_nulos_excluidos(self, df_densidade_mock, dashboard):
-        with patch.object(dashboard, "carregar_contagem_uf",
-                          return_value=df_densidade_mock):
-            df = dashboard.carregar_contagem_uf()
-        assert df["cod_uf"].isna().sum() == 0
-        assert df["total"].isna().sum() == 0
-
-
-# ── cadastrar_usuario + carregar_favoritos + salvar_favoritos ─────────────────
+# TestCarregarContagemUf e TestCarregarBolhasAnoUfMock foram removidos:
+# testavam carregar_contagem_uf() e carregar_bolhas_ano_uf(), funções que
+# saíram do app. A primeira lia mv_densidade_uf, uma view que nunca existiu
+# no banco — o teste passava porque o mock devolvia um DataFrame pronto,
+# sem nunca tocar no PostgreSQL. A segunda alimentava o gráfico de bolhas,
+# substituído pelo gráfico de linhas de capital social.
+#
+# Vale o registro: um teste que mocka a resposta do banco não prova que a
+# consulta funciona. Prova só que o código sabe ler o DataFrame que ele
+# mesmo inventou.
 
 class TestFavoritos:
     def setup_method(self, _):
@@ -278,35 +244,6 @@ class TestCarregarDataQualityMock:
         assert result["total"] > result["capital_invalido"]
         assert result["total"] > result["data_invalida"]
         assert result["total"] > result["cnae_nao_mapeado"]
-
-
-class TestCarregarBolhasAnoUfMock:
-    def _df_fake(self):
-        return pd.DataFrame([
-            {"ano": 2010, "uf": "SP", "total_empresas": 1200, "capital_medio": 350000.0},
-            {"ano": 2010, "uf": "RJ", "total_empresas": 800,  "capital_medio": 280000.0},
-            {"ano": 2015, "uf": "MG", "total_empresas": 600,  "capital_medio": 200000.0},
-        ])
-
-    def test_retorna_dataframe(self, dashboard):
-        with patch("pandas.read_sql", return_value=self._df_fake()):
-            df = dashboard.carregar_bolhas_ano_uf()
-        assert isinstance(df, pd.DataFrame)
-
-    def test_colunas_obrigatorias(self, dashboard):
-        with patch("pandas.read_sql", return_value=self._df_fake()):
-            df = dashboard.carregar_bolhas_ano_uf()
-        assert {"ano", "uf", "total_empresas", "capital_medio"}.issubset(df.columns)
-
-    def test_total_empresas_e_positivo(self, dashboard):
-        with patch("pandas.read_sql", return_value=self._df_fake()):
-            df = dashboard.carregar_bolhas_ano_uf()
-        assert (df["total_empresas"] > 0).all()
-
-    def test_capital_medio_e_positivo(self, dashboard):
-        with patch("pandas.read_sql", return_value=self._df_fake()):
-            df = dashboard.carregar_bolhas_ano_uf()
-        assert (df["capital_medio"] > 0).all()
 
 
 class TestCarregarTreemapSetoresMock:

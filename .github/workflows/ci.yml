@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+
+    # Um PostgreSQL de verdade. Testes que mockam a resposta do banco provam
+    # que o Python sabe ler o DataFrame que ele mesmo inventou — não que a
+    # consulta funciona. Os erros que este projeto de fato cometeu (agrupar por
+    # um campo que não é UF, cruzar shards que não correspondem) só aparecem
+    # com SQL rodando contra um servidor.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cnpj
+          POSTGRES_PASSWORD: cnpj_local
+          POSTGRES_DB: cnpj
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cnpj -d cnpj"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CNPJ_COMPETENCIA: "2026-02-28"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Testes de unidade
+        # Sem CNPJ_TEST_DSN, os de integração se pulam sozinhos.
+        run: python -m pytest tests/ -v --tb=short
+
+      - name: Construir a base de demonstração
+        env:
+          DATABASE_URL: postgresql://cnpj:cnpj_local@localhost:5432/cnpj
+        run: python demo/criar_demo.py
+
+      - name: Testes de integração (PostgreSQL real)
+        env:
+          DATABASE_URL: postgresql://cnpj:cnpj_local@localhost:5432/cnpj
+          CNPJ_TEST_DSN: postgresql://cnpj:cnpj_local@localhost:5432/cnpj
+        run: python -m pytest tests/test_integracao_mvs.py -v --tb=short
+
+      - name: O dashboard sobe inteiro?
+        # Renderiza o app de ponta a ponta com o AppTest do Streamlit. Pega
+        # qualquer gráfico que quebre em produção sem quebrar o import.
+        env:
+          DATABASE_URL: postgresql://cnpj:cnpj_local@localhost:5432/cnpj
+        run: |
+          python - <<'PY'
+          from streamlit.testing.v1 import AppTest
+          at = AppTest.from_file("app.py", default_timeout=300)
+          at.session_state["logado"] = True
+          at.session_state["user_nome"] = "ci"
+          at.session_state["user_email"] = "ci@ci"
+          at.run()
+
+          if at.exception:
+              raise SystemExit(f"Exceção ao renderizar: {at.exception[0].value}")
+
+          erros = [e.value for e in at.error]
+          if erros:
+              for e in erros:
+                  print("ERRO NA PÁGINA:", e)
+              raise SystemExit(f"{len(erros)} bloco(s) do dashboard falharam")
+
+          print(f"OK — {len(at.title)} seções renderizadas sem erro")
+          PY

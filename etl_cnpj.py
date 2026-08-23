@@ -12,14 +12,37 @@ Correções em relação à versão anterior:
   5. Carrega situacao_cadastral e data_situacao — permite análise de sobrevivência.
   6. Portões de qualidade que abortam a carga em vez de gravar dado silenciosamente errado.
   7. Nenhuma data simulada. Nenhuma credencial em código.
+  8. Carrega o Simples.zip (opção pelo Simples e pelo MEI) e o motivo da baixa —
+     permite comparar sobrevivência por regime tributário e saber POR QUE as
+     empresas fecham, não só quando.
 
 Estratégia: Query-First. O join roda no Postgres, não em pandas — a base completa
 não cabe em 16 GB de RAM. Os CSVs entram por COPY nas tabelas bronze.
 
 Uso:
-    set DATABASE_URL=postgresql://postgres:SENHA@localhost:5432/tcc_cnpj
-    set CNPJ_DIR=C:\\Users\\eduar\\OneDrive\\Desktop\\tccCNPJ\\2026-02\\2026-02
+    As variáveis vêm do .env — não precisa exportar nada para a carga normal.
+
     python etl_cnpj.py
+
+Para reaproveitar as bronze já carregadas e pular os ~30 min de COPY, defina
+CNPJ_SKIP_BRONZE. A sintaxe MUDA conforme o terminal, e errar aqui não dá erro
+nenhum: a variável simplesmente não chega ao Python e o ETL recarrega tudo.
+
+    PowerShell (o prompt começa com "PS C:\\...")
+        $env:CNPJ_SKIP_BRONZE = "1"
+        python etl_cnpj.py
+
+    Prompt de Comando (cmd.exe)
+        set CNPJ_SKIP_BRONZE=1
+        python etl_cnpj.py
+
+No PowerShell, `set` é apelido de Set-Variable e cria uma variável do shell,
+não do ambiente — `os.environ` não enxerga.
+
+Para conferir antes de rodar:
+
+    PowerShell:  $env:CNPJ_SKIP_BRONZE
+    cmd.exe:     echo %CNPJ_SKIP_BRONZE%
 """
 
 import os
@@ -87,6 +110,20 @@ CREATE UNLOGGED TABLE bronze_estabelecimentos (
 ){ts};
 """
 
+# Simples.zip — arquivo único (não é fatiado em 10 como Empresas/Estabelecimentos).
+# Uma linha por cnpj_basico, com a adesão ao Simples Nacional e ao MEI.
+DDL_SIMPLES = """
+CREATE UNLOGGED TABLE bronze_simples (
+    cnpj_basico            text,
+    opcao_simples          text,   -- S / N
+    data_opcao_simples     text,
+    data_exclusao_simples  text,
+    opcao_mei              text,   -- S / N
+    data_opcao_mei         text,
+    data_exclusao_mei      text
+){ts};
+"""
+
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -97,6 +134,17 @@ def preparar_tablespace():
 
     CREATE TABLESPACE não pode rodar dentro de bloco de transação, então usa
     uma conexão própria em autocommit, separada da transação principal.
+
+    Antes de qualquer coisa, confere se a PASTA do tablespace está acessível.
+    A versão anterior só olhava o catálogo: encontrava o tablespace registrado,
+    logava "já existe" e seguia em frente. Se a pasta tivesse sumido — drive
+    externo desconectado, letra de unidade trocada — o erro só aparecia lá na
+    frente, no CREATE TABLE, e nesta forma:
+
+        não foi possível criar o diretório "pg_tblspc/41458/PG_18_.../16388":
+        No such file or directory
+
+    Nada ali diz "conecte o drive". Este bloco diz.
     """
     if not TABLESPACE:
         log("Tablespace: padrão (bronze e gold no mesmo volume)")
@@ -106,10 +154,39 @@ def preparar_tablespace():
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM pg_tablespace WHERE spcname = %s", (TABLESPACE,))
-            if cur.fetchone():
-                log(f"Tablespace {TABLESPACE} já existe")
+            cur.execute(
+                "SELECT pg_tablespace_location(oid) FROM pg_tablespace "
+                "WHERE spcname = %s",
+                (TABLESPACE,),
+            )
+            row = cur.fetchone()
+
+            if row:
+                registrado = row[0] or TABLESPACE_DIR
+                # O caminho que vale é o gravado no catálogo: editar o .env não
+                # move um tablespace já criado.
+                if not os.path.isdir(registrado):
+                    sys.exit(
+                        f"\nO tablespace {TABLESPACE} existe no PostgreSQL e aponta para:\n"
+                        f"    {registrado}\n"
+                        f"...mas essa pasta não está acessível agora.\n\n"
+                        f"Causa mais comum: o drive externo está desconectado, ou "
+                        f"voltou com outra letra de unidade.\n\n"
+                        f"Rode 'python diagnostico_tablespace.py' — ele confere as "
+                        f"letras montadas, o caminho do catálogo e se as tabelas "
+                        f"bronze ainda estão legíveis, e diz o que fazer em cada caso.\n"
+                    )
+                log(f"Tablespace {TABLESPACE} já existe em {registrado}")
                 return
+
+            if not os.path.isdir(TABLESPACE_DIR):
+                sys.exit(
+                    f"\nCNPJ_TABLESPACE_DIR aponta para uma pasta que não existe:\n"
+                    f"    {TABLESPACE_DIR}\n\n"
+                    f"Crie a pasta (VAZIA) e dê Controle Total à conta que roda o "
+                    f"serviço do PostgreSQL, ou apague CNPJ_TABLESPACE_DIR do .env "
+                    f"para deixar as bronze no volume padrão (~75 GB).\n"
+                )
 
             caminho = TABLESPACE_DIR.replace("\\", "/")
             log(f"Criando tablespace {TABLESPACE} em {caminho}")
@@ -187,13 +264,29 @@ ARQUIVO_MVS = "views_materializadas.sql"
 
 
 def bronze_pronta(cur):
-    """Diz se as bronze já existem e estão populadas."""
+    """Diz se as bronze já existem e estão populadas.
+
+    bronze_simples entra na checagem: quem já tinha as bronze carregadas de uma
+    execução anterior NÃO tem essa tabela, e precisa carregá-la. Sem isso,
+    CNPJ_SKIP_BRONZE=1 pularia a carga e a Gold sairia sem Simples/MEI.
+    """
     cur.execute("SELECT to_regclass('bronze_empresas'), "
-                "to_regclass('bronze_estabelecimentos')")
+                "to_regclass('bronze_estabelecimentos'), "
+                "to_regclass('bronze_simples')")
     if any(t is None for t in cur.fetchone()):
         return False
     cur.execute("SELECT (SELECT count(*) FROM bronze_empresas) > 0 "
-                "AND (SELECT count(*) FROM bronze_estabelecimentos) > 0")
+                "AND (SELECT count(*) FROM bronze_estabelecimentos) > 0 "
+                "AND (SELECT count(*) FROM bronze_simples) > 0")
+    return cur.fetchone()[0]
+
+
+def simples_pronta(cur):
+    """Só a bronze_simples — permite carregar apenas ela sem refazer os 30 min."""
+    cur.execute("SELECT to_regclass('bronze_simples')")
+    if cur.fetchone()[0] is None:
+        return False
+    cur.execute("SELECT count(*) > 0 FROM bronze_simples")
     return cur.fetchone()[0]
 
 
@@ -268,7 +361,12 @@ SELECT
     NULLIF(st.municipio, '')::bigint                              AS cod_municipio,
     st.uf,
     NULLIF(st.situacao_cadastral, '')::int                        AS situacao_cadastral,
-    to_date(NULLIF(st.data_situacao, '0'), 'YYYYMMDD')            AS data_situacao
+    to_date(NULLIF(st.data_situacao, '0'), 'YYYYMMDD')            AS data_situacao,
+    NULLIF(st.motivo_situacao, '')::int                           AS motivo_situacao,
+    -- 'S'/'N' da Receita viram booleano; ausência no Simples.zip vira NULL
+    -- (a empresa nunca foi avaliada), que é diferente de 'N' (avaliada e fora).
+    CASE si.opcao_simples WHEN 'S' THEN true WHEN 'N' THEN false END AS opcao_simples,
+    CASE si.opcao_mei     WHEN 'S' THEN true WHEN 'N' THEN false END AS opcao_mei
 FROM (
     SELECT lpad(cnpj_basico, 8, '0') AS cnpj_basico,
            razao_social, natureza_juridica, capital_social
@@ -278,7 +376,7 @@ JOIN (
     -- matriz_filial = '1' garante uma linha por EMPRESA, não por estabelecimento
     SELECT lpad(cnpj_basico, 8, '0') AS cnpj_basico,
            data_inicio_atividade, cnae_fiscal, municipio, uf,
-           situacao_cadastral, data_situacao
+           situacao_cadastral, data_situacao, motivo_situacao
     FROM bronze_estabelecimentos
     WHERE matriz_filial = '1'
       -- Quarentena: a origem tem um punhado de datas impossíveis (ano 0,
@@ -287,7 +385,18 @@ JOIN (
       AND data_inicio_atividade ~ '^[0-9]{8}$'
       AND to_date(data_inicio_atividade, 'YYYYMMDD')
           BETWEEN DATE '1900-01-01' AND CURRENT_DATE
-) st USING (cnpj_basico);
+) st USING (cnpj_basico)
+LEFT JOIN (
+    -- GROUP BY colapsa eventuais duplicatas de cnpj_basico no Simples.zip.
+    -- Sem isso, uma única linha repetida multiplicaria a empresa na Gold e
+    -- derrubaria a PRIMARY KEY lá embaixo — falha barulhenta, mas depois de
+    -- 40 minutos de join.
+    SELECT lpad(cnpj_basico, 8, '0')   AS cnpj_basico,
+           max(NULLIF(opcao_simples, '')) AS opcao_simples,
+           max(NULLIF(opcao_mei, ''))     AS opcao_mei
+    FROM bronze_simples
+    GROUP BY 1
+) si USING (cnpj_basico);
 
 ALTER TABLE empresas_gold ADD PRIMARY KEY (cnpj_basico);
 """
@@ -323,6 +432,19 @@ CHECKS = [
             GROUP BY (EXTRACT(YEAR FROM data_abertura)::int / 10)
         ) t""",
      lambda v, ctx: v is not None and v < 60),
+
+    # O join com o Simples é LEFT: se o lpad da chave divergir, ele não quebra,
+    # só devolve NULL em tudo — e a análise por regime tributário sai vazia sem
+    # avisar. Este portão transforma esse silêncio em falha.
+    ("Cobertura do Simples/MEI",
+     "SELECT round(100.0 * count(*) FILTER (WHERE opcao_simples IS NOT NULL) "
+     "/ NULLIF(count(*), 0), 1) FROM empresas_gold",
+     lambda v, ctx: v is not None and v > 20),
+
+    ("Baixadas sem motivo informado",
+     "SELECT round(100.0 * count(*) FILTER (WHERE motivo_situacao IS NULL) "
+     "/ NULLIF(count(*), 0), 1) FROM empresas_gold WHERE situacao_cadastral = 8",
+     lambda v, ctx: v is not None and v < 50),
 ]
 
 
@@ -348,6 +470,14 @@ def rodar_checks(cur):
 def main():
     inicio = time.time()
 
+    # Registra a decisão logo no começo. CNPJ_SKIP_BRONZE definido com a
+    # sintaxe errada do shell não gera erro algum — só não chega ao Python, e
+    # o ETL recarrega 75 GB em silêncio. Esta linha entrega o engano em 1 s.
+    log(
+        f"CNPJ_SKIP_BRONZE={os.environ.get('CNPJ_SKIP_BRONZE') or '(não definida)'}"
+        f" → bronze existente será {'reaproveitada' if PULAR_BRONZE else 'RECARREGADA'}"
+    )
+
     # Fora da transação principal: CREATE TABLESPACE exige autocommit.
     preparar_tablespace()
 
@@ -369,16 +499,26 @@ def main():
 
             if PULAR_BRONZE and bronze_pronta(cur):
                 log("Bronze já carregada — pulando (CNPJ_SKIP_BRONZE=1)")
+            elif PULAR_BRONZE and not simples_pronta(cur):
+                # Caso comum ao atualizar um banco que já rodou o ETL antigo:
+                # Empresas e Estabelecimentos estão lá, só falta o Simples.
+                # Carrega os ~285 MB dele e poupa os 30 min das outras duas.
+                log("Bronze existente sem bronze_simples — carregando só o Simples")
+                cur.execute("DROP TABLE IF EXISTS bronze_simples")
+                cur.execute(DDL_SIMPLES.format(ts=CLAUSULA_TS))
+                copiar_shards(cur, "Simples*.zip", "bronze_simples")
             else:
                 log("Recriando tabelas bronze")
                 cur.execute("DROP TABLE IF EXISTS bronze_empresas, "
-                            "bronze_estabelecimentos")
+                            "bronze_estabelecimentos, bronze_simples")
                 cur.execute(DDL_EMPRESAS.format(ts=CLAUSULA_TS))
                 cur.execute(DDL_ESTABELECIMENTOS.format(ts=CLAUSULA_TS))
+                cur.execute(DDL_SIMPLES.format(ts=CLAUSULA_TS))
 
                 copiar_shards(cur, "Empresas*.zip", "bronze_empresas")
                 copiar_shards(cur, "Estabelecimentos*.zip",
                               "bronze_estabelecimentos")
+                copiar_shards(cur, "Simples*.zip", "bronze_simples")
 
         # Persiste as bronze antes de validar. Sem isso, uma reprovação de
         # portão faria rollback de ~30 min de carga junto com a Gold.
@@ -416,6 +556,7 @@ def main():
             cur.execute("CREATE INDEX idx_eg_cnae ON empresas_gold (cnae_fiscal)")
             cur.execute("CREATE INDEX idx_eg_municipio ON empresas_gold (cod_municipio)")
             cur.execute("CREATE INDEX idx_eg_uf ON empresas_gold (uf)")
+            cur.execute("CREATE INDEX idx_eg_situacao ON empresas_gold (situacao_cadastral)")
             cur.execute("CREATE INDEX idx_eg_data_abertura ON empresas_gold "
                         "USING brin (data_abertura) WITH (pages_per_range = 128)")
             # Índice parcial covering: só ~73% das linhas têm capital > 0, e o

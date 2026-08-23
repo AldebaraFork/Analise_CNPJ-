@@ -1,12 +1,12 @@
 """
-Testes para dashboard_tcc.py.
+Testes para app.py.
 Usa SQLite em memória — não requer PostgreSQL local.
 
 Ordem de inicialização (crítica):
   1. Cria o engine SQLite e o schema antes de qualquer import do dashboard
   2. Monta o mock do Streamlit no sys.modules
   3. Substitui sqlalchemy.create_engine pelo lambda que devolve o engine de teste
-  4. Importa dashboard_tcc  →  engine = create_engine(...) recebe nosso engine
+  4. Importa app  →  engine = create_engine(...) recebe nosso engine
   5. Restaura create_engine original
 """
 
@@ -35,7 +35,7 @@ _ENGINE = create_engine(
 
 with _ENGINE.connect() as _c:
     # Tabela de usuários com sintaxe SQLite (sem SERIAL do PostgreSQL).
-    # Precisa existir ANTES de dashboard_tcc ser importado, para que o
+    # Precisa existir ANTES de app ser importado, para que o
     # init_db() do módulo (CREATE TABLE IF NOT EXISTS) seja silencioso.
     _c.execute(text("""
         CREATE TABLE usuarios (
@@ -77,11 +77,11 @@ sys.modules["streamlit"] = _mock_st
 _orig_create_engine = _sa.create_engine
 _sa.create_engine = lambda *a, **kw: _ENGINE
 
-import dashboard_tcc  # noqa: E402 — import tardio intencional
+import app  # noqa: E402 — import tardio intencional
 
 _sa.create_engine = _orig_create_engine  # restaura o original
 
-from dashboard_tcc import (  # noqa: E402
+from app import (  # noqa: E402
     cadastrar_usuario,
     excluir_conta_db,
     verificar_login,
@@ -92,7 +92,7 @@ from dashboard_tcc import (  # noqa: E402
 
 def _insert_user(nome: str, email: str, pwd: str) -> None:
     h = bcrypt.hashpw(pwd.encode(), bcrypt.gensalt()).decode()
-    with dashboard_tcc.engine.connect() as c:
+    with app.engine.connect() as c:
         c.execute(
             text("INSERT INTO usuarios (nome, email, senha) VALUES (:n, :e, :s)"),
             {"n": nome, "e": email, "s": h},
@@ -101,7 +101,7 @@ def _insert_user(nome: str, email: str, pwd: str) -> None:
 
 
 def _delete_user(email: str) -> None:
-    with dashboard_tcc.engine.connect() as c:
+    with app.engine.connect() as c:
         c.execute(text("DELETE FROM usuarios WHERE email = :e"), {"e": email})
         c.commit()
 
@@ -140,7 +140,7 @@ class TestCadastrarUsuario:
 
     def test_senha_armazenada_como_bcrypt(self):
         cadastrar_usuario("Novo", "novo@test.com", "abc456")
-        with dashboard_tcc.engine.connect() as c:
+        with app.engine.connect() as c:
             row = c.execute(
                 text("SELECT senha FROM usuarios WHERE email = :e"),
                 {"e": "novo@test.com"},
